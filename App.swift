@@ -26,17 +26,36 @@ private struct SearchResult: Codable { let items: [Repo] }
 /// Search API trần 1000 kết quả, nên phân trang cũng dừng ở đó.
 let pageSize = 50, maxResults = 1000
 
+/// Preset chỉ là giá trị sẵn cho ô topic — vẫn gõ tay được topic khác.
+let presets: [(name: String, topic: String)] = [
+    ("Tất cả", ""), ("AI", "ai"), ("LLM", "llm"), ("AI agents", "ai-agents"),
+    ("MCP", "mcp"), ("CLI", "cli"), ("Dev tools", "developer-tools"),
+]
+
+enum SortBy: String, CaseIterable, Identifiable {
+    case stars = "Nhiều sao", updated = "Mới cập nhật", delta = "Tăng sao nhanh", best = "Liên quan"
+    var id: Self { self }
+    /// `delta` xếp ở phía mình nên vẫn hỏi API theo sao; `best` là best-match, bỏ tham số sort.
+    var apiSort: String? {
+        switch self {
+        case .stars, .delta: return "stars"
+        case .updated:       return "updated"
+        case .best:          return nil
+        }
+    }
+}
+
 func today(_ offset: Int = 0) -> String { Store.day(offset) }
 
 /// Trending has no API, so approximate it: repos created in the window, most starred.
 /// `topic` narrows to the AI/tool slice the app is for.
-func fetch(days: Int, topic: String, page: Int = 1) async throws -> [Repo] {
+func fetch(days: Int, topic: String, sort: SortBy = .stars, page: Int = 1) async throws -> [Repo] {
     var q = "created:>\(today(-days)) stars:>10"
     if !topic.isEmpty { q += " topic:\(topic)" }
     var c = URLComponents(string: "https://api.github.com/search/repositories")!
-    c.queryItems = [.init(name: "q", value: q), .init(name: "sort", value: "stars"),
-                    .init(name: "order", value: "desc"), .init(name: "per_page", value: "\(pageSize)"),
-                    .init(name: "page", value: "\(page)")]
+    c.queryItems = [.init(name: "q", value: q), .init(name: "order", value: "desc"),
+                    .init(name: "per_page", value: "\(pageSize)"), .init(name: "page", value: "\(page)")]
+    if let s = sort.apiSort { c.queryItems?.append(.init(name: "sort", value: s)) }
     var r = URLRequest(url: c.url!)
     r.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
     // A token lifts the 10 req/min unauthenticated search limit; optional.
@@ -89,6 +108,7 @@ struct ContentView: View {
     @State private var repos: [Repo] = []
     @State private var days = 7
     @State private var topic = "ai"
+    @State private var sort = SortBy.stars
     @State private var error: String?
     @State private var loading = false
     @State private var page = 1
@@ -107,11 +127,21 @@ struct ContentView: View {
                     // của bộ lọc mới bị nối vào danh sách cũ.
                     .onChange(of: days) { Task { await load() } }
                 TextField("topic (ai, llm, cli…)", text: $topic)
-                    .frame(width: 140)
+                    .frame(width: 130)
                     .onSubmit { Task { await load() } }
                 Button("Refresh") { Task { await load() } }.disabled(loading)
                 if loading { ProgressView().scaleEffect(0.5) }
-            }.padding(8)
+            }.padding(.horizontal, 8).padding(.top, 8)
+            HStack {
+                Picker("", selection: Binding(get: { topic }, set: { topic = $0; Task { await load() } })) {
+                    ForEach(presets, id: \.topic) { Text($0.name).tag($0.topic) }
+                }.frame(width: 150)
+                Picker("", selection: $sort) {
+                    ForEach(SortBy.allCases) { Text($0.rawValue).tag($0) }
+                }.frame(width: 150)
+                .onChange(of: sort) { Task { await load() } }
+                Spacer()
+            }.padding(.horizontal, 8).padding(.bottom, 8)
             Divider()
             if let e = error { Text(e).foregroundStyle(.red).padding(8) }
             if !configured {
@@ -162,7 +192,7 @@ struct ContentView: View {
         loading = true; error = nil
         let next = reset ? 1 : page + 1
         do {
-            let batch = try await fetch(days: days, topic: topic, page: next)
+            let batch = try await fetch(days: days, topic: topic, sort: sort, page: next)
             if reset {
                 repos = batch
             } else {
@@ -171,6 +201,8 @@ struct ContentView: View {
                 repos += batch.filter { !seen.contains($0.id) }
             }
             page = next
+            // Delta chỉ mình biết (từ metrics), API không sort hộ được — xếp tại chỗ.
+            if sort == .delta { repos.sort { $0.delta > $1.delta } }
             canLoadMore = batch.count == pageSize && repos.count < maxResults
         } catch { self.error = error.localizedDescription }
         loading = false
