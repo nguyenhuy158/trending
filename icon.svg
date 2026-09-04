@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Kawaii-logo style: thick outlined pastel card, chunky type, one smiling mascot. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF3F8"/><stop offset="1" stop-color="#E8F6FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="26" y="26" width="460" height="460" rx="96" fill="url(#sky)" stroke="#3B3355" stroke-width="16"/>
+
+  <!-- header band -->
+  <path d="M42 122 V122 h428 v-0 a80 80 0 0 0 -80 -80 H122 a80 80 0 0 0 -80 80 Z" fill="#FFB3C7"/>
+  <line x1="42" y1="122" x2="470" y2="122" stroke="#3B3355" stroke-width="12"/>
+  <text x="256" y="98" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-weight="bold"
+        font-size="52" fill="#FFFFFF" stroke="#3B3355" stroke-width="8" paint-order="stroke">TRENDING</text>
+
+  <!-- rising chart line with sparkle steps -->
+  <polyline points="96,392 176,336 240,364 328,262 408,206" fill="none" stroke="#7ED9C4"
+            stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="96,392 176,336 240,364 328,262 408,206" fill="none" stroke="#3B3355"
+            stroke-width="10" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="0 0"/>
+  <circle cx="176" cy="336" r="16" fill="#FFFFFF" stroke="#3B3355" stroke-width="10"/>
+  <circle cx="328" cy="262" r="16" fill="#FFFFFF" stroke="#3B3355" stroke-width="10"/>
+
+  <!-- mascot: smiling star at the top of the trend -->
+  <g transform="translate(408 200)">
+    <path d="M0,-86 L24,-30 L84,-24 L39,15 L52,74 L0,44 L-52,74 L-39,15 L-84,-24 L-24,-30 Z"
+          fill="#FFD86B" stroke="#3B3355" stroke-width="14" stroke-linejoin="round"/>
+    <circle cx="-20" cy="-6" r="7" fill="#3B3355"/>
+    <circle cx="20" cy="-6" r="7" fill="#3B3355"/>
+    <path d="M-11,14 q11,12 22,0" fill="none" stroke="#3B3355" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="-36" cy="10" r="9" fill="#FF9FB6" opacity=".85"/>
+    <circle cx="36" cy="10" r="9" fill="#FF9FB6" opacity=".85"/>
+  </g>
+
+  <!-- sparkles -->
+  <g fill="#B8A7FF" stroke="#3B3355" stroke-width="8" stroke-linejoin="round">
+    <path d="M112 210 l12 26 26 12 -26 12 -12 26 -12 -26 -26 -12 26 -12 Z"/>
+    <path d="M246 168 l9 20 20 9 -20 9 -9 20 -9 -20 -20 -9 20 -9 Z"/>
+  </g>
+</svg>

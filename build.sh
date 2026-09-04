@@ -3,7 +3,7 @@ set -e
 cd "$(dirname "$0")"
 APP="Trending.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -15,8 +15,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict></plist>
 PLIST
+[ -f AppIcon.icns ] || iconutil -c icns AppIcon.iconset -o AppIcon.icns
+cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 swiftc -O -parse-as-library App.swift -o "$APP/Contents/MacOS/Trending" -framework Cocoa -framework SwiftUI
 codesign --force --sign - "$APP"
 echo "Built $APP — open $APP"
