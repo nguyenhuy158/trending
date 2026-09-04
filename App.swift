@@ -95,13 +95,19 @@ struct SetupView: View {
     @State private var sbKey = ""
     @State private var aiKey = ""
     @State private var aiModel = AI.model
+    @State private var models: [AI.Model] = []
 
     var body: some View {
         Form {
             TextField("Supabase URL", text: $sbURL, prompt: Text("https://xxx.supabase.co"))
             SecureField("Supabase anon key", text: $sbKey)
             SecureField("OpenRouter API key", text: $aiKey, prompt: Text("cho nút ✨"))
-            TextField("Model", text: $aiModel, prompt: Text(AI.defaultModel))
+            Picker("Model", selection: $aiModel) {
+                // Model đang chọn có thể không nằm trong list (free đổi liên tục) — vẫn phải hiện.
+                if !models.contains(where: { $0.id == aiModel }) { Text(aiModel).tag(aiModel) }
+                ForEach(models) { Text($0.name).tag($0.id) }
+            }
+            .task { models = await AI.freeModels() }
             Button("Lưu") {
                 Store.url = sbURL
                 if !sbKey.isEmpty { Store.key = sbKey }

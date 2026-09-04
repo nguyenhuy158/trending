@@ -23,6 +23,19 @@ enum AI {
         return e.isEmpty ? (UserDefaults.standard.string(forKey: k) ?? "") : e
     }
 
+    struct Model: Codable, Identifiable, Hashable { let id: String; let name: String }
+    private struct ModelList: Codable { let data: [Model] }
+
+    /// Danh sách model free lấy live — OpenRouter thay model free khá thường xuyên.
+    /// Endpoint này public, không cần key.
+    static func freeModels() async -> [Model] {
+        guard let url = URL(string: "https://openrouter.ai/api/v1/models"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let list = try? JSONDecoder().decode(ModelList.self, from: data)
+        else { return [] }
+        return list.data.filter { $0.id.hasSuffix(":free") }.sorted { $0.name < $1.name }
+    }
+
     private struct Reply: Codable {
         let choices: [Choice]
         struct Choice: Codable { let message: Message }
