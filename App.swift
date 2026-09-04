@@ -19,34 +19,7 @@ struct Repo: Codable, Identifiable {
 
 private struct SearchResult: Codable { let items: [Repo] }
 
-// Snapshots live in Application Support so stats survive rebuilds of the .app.
-private let storeURL: URL = {
-    let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Trending")
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir.appendingPathComponent("snapshots.json")
-}()
-
-// date -> (repo id -> stars). Keeping every day makes "gained since yesterday" a lookup.
-typealias Snapshots = [String: [String: Int]]
-
-func loadSnapshots() -> Snapshots {
-    guard let d = try? Data(contentsOf: storeURL) else { return [:] }
-    return (try? JSONDecoder().decode(Snapshots.self, from: d)) ?? [:]
-}
-
-func saveSnapshot(_ repos: [Repo]) {
-    var s = loadSnapshots()
-    s[today()] = Dictionary(uniqueKeysWithValues: repos.map { (String($0.id), $0.stargazers_count) })
-    // Keep a month; older snapshots buy nothing but disk.
-    for k in s.keys.sorted().dropLast(30) { s.removeValue(forKey: k) }
-    try? JSONEncoder().encode(s).write(to: storeURL)
-}
-
-func today(_ offset: Int = 0) -> String {
-    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-    return f.string(from: Calendar.current.date(byAdding: .day, value: offset, to: Date())!)
-}
+func today(_ offset: Int = 0) -> String { Store.day(offset) }
 
 /// Trending has no API, so approximate it: repos created in the window, most starred.
 /// `topic` narrows to the AI/tool slice the app is for.
@@ -68,11 +41,10 @@ func fetch(days: Int, topic: String) async throws -> [Repo] {
                       userInfo: [NSLocalizedDescriptionKey: "GitHub returned \(h.statusCode) — rate limited? Set GITHUB_TOKEN."])
     }
     var repos = try JSONDecoder().decode(SearchResult.self, from: data).items
-    let prev = loadSnapshots()[today(-1)] ?? loadSnapshots()[today()] ?? [:]
+    let prev = try await Store.sync(repos)
     for i in repos.indices {
         if let was = prev[String(repos[i].id)] { repos[i].delta = repos[i].stargazers_count - was }
     }
-    saveSnapshot(repos)
     return repos
 }
 
@@ -89,6 +61,9 @@ struct ContentView: View {
     @State private var topic = "ai"
     @State private var error: String?
     @State private var loading = false
+    @State private var configured = Store.isConfigured
+    @State private var sbURL = Store.url
+    @State private var sbKey = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,7 +76,19 @@ struct ContentView: View {
                 if loading { ProgressView().scaleEffect(0.5) }
             }.padding(8)
             Divider()
-            if let e = error { Text(e).foregroundStyle(.red).padding() }
+            if let e = error { Text(e).foregroundStyle(.red).padding(8) }
+            if !configured {
+                // Chỉ hiện khi chưa có credential — nhập xong là biến mất.
+                VStack(spacing: 6) {
+                    TextField("https://xxx.supabase.co", text: $sbURL)
+                    SecureField("anon key", text: $sbKey)
+                    Button("Lưu Supabase") {
+                        Store.url = sbURL; Store.key = sbKey
+                        configured = Store.isConfigured
+                        Task { await load() }
+                    }.disabled(sbURL.isEmpty || sbKey.isEmpty)
+                }.padding(8)
+            }
             List(repos) { r in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {

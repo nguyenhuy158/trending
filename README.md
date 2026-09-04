@@ -12,5 +12,7 @@ open Trending.app
 ## Cách hoạt động
 
 - Trang trending của GitHub không có API, nên app dùng Search API: repo `created:>N ngày`, sort theo sao, lọc theo topic (mặc định `ai`).
-- Mỗi lần refresh lưu snapshot số sao vào `~/Library/Application Support/Trending/snapshots.json` (giữ 30 ngày) và hiện `+N` sao so với hôm qua.
+- Dữ liệu lưu trên Supabase Postgres: bảng `items` (repo, `meta jsonb` cho field riêng từng nguồn) và `metrics` (score theo ngày). Chạy `schema.sql` trong SQL Editor một lần.
+- Cấu hình bằng env `SUPABASE_URL` / `SUPABASE_ANON_KEY`, hoặc điền ngay trong app lần đầu mở (lưu vào UserDefaults).
+- Mỗi lần refresh upsert snapshot hôm nay và hiện `+N` sao so với hôm qua.
 - Bị rate limit thì set `GITHUB_TOKEN` trước khi mở app.
