@@ -96,6 +96,7 @@ struct SetupView: View {
     @State private var aiKey = ""
     @State private var aiModel = AI.model
     @State private var models: [AI.Model] = []
+    @State private var saved = false
 
     var body: some View {
         Form {
@@ -108,14 +109,26 @@ struct SetupView: View {
                 ForEach(models) { Text($0.name).tag($0.id) }
             }
             .task { models = await AI.freeModels() }
-            Button("Lưu") {
-                Store.url = sbURL
-                if !sbKey.isEmpty { Store.key = sbKey }
-                if !aiKey.isEmpty { AI.key = aiKey }
-                AI.model = aiModel
-                onSave()
+            HStack {
+                Button("Lưu") {
+                    Store.url = sbURL
+                    if !sbKey.isEmpty { Store.key = sbKey }
+                    if !aiKey.isEmpty { AI.key = aiKey }
+                    AI.model = aiModel
+                    onSave()
+                    saved = true
+                    // Tự tắt sau 2s — đỡ phải làm hệ thống toast cho đúng một chỗ.
+                    Task { try? await Task.sleep(nanoseconds: 2_000_000_000); saved = false }
+                }
+                .keyboardShortcut(.defaultAction)
+
+                if saved {
+                    Label("Đã lưu", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green).font(.callout)
+                        .transition(.opacity)
+                }
             }
-            .keyboardShortcut(.defaultAction)
+            .animation(.default, value: saved)
         }
         .padding()
         .frame(width: 380)
