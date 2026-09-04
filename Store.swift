@@ -48,12 +48,21 @@ enum Store {
         return data
     }
 
-    private struct Row: Codable { let id: Int64; let external_id: String }
+    private struct Row: Codable { let id: Int64; let external_id: String; let ai_summary: String? }
     private struct Metric: Codable { let item_id: Int64; let day: String; let score: Int }
 
     struct Synced {
         var previous: [String: Int] = [:]      // sao hôm qua, để tính delta
         var history: [String: [Int]] = [:]     // sao theo ngày, để vẽ sparkline
+        var summary: [String: String] = [:]    // tóm tắt AI đã cache
+    }
+
+    /// Ghi tóm tắt của Claude vào item để lần sau khỏi gọi lại.
+    static func saveSummary(_ text: String, for externalID: String, source: String = "github") async throws {
+        _ = try await send(try request("items?source=eq.\(source)&external_id=eq.\(externalID)",
+                                       method: "PATCH",
+                                       body: try JSONSerialization.data(withJSONObject: ["ai_summary": text]),
+                                       prefer: "return=minimal"))
     }
 
     /// Upsert item + snapshot sao hôm nay; trả về sao hôm qua và lịch sử 14 ngày.
@@ -67,7 +76,7 @@ enum Store {
              "meta": ["language": r.language as Any? ?? NSNull()]]
         }
         let rows = try JSONDecoder().decode([Row].self, from: try await send(try request(
-            "items?on_conflict=source,external_id&select=id,external_id",
+            "items?on_conflict=source,external_id&select=id,external_id,ai_summary",
             method: "POST", body: try JSONSerialization.data(withJSONObject: items),
             prefer: "resolution=merge-duplicates,return=representation")))
 
@@ -91,6 +100,7 @@ enum Store {
                                        prefer: "resolution=merge-duplicates,return=minimal"))
 
         var out = Synced()
+        for row in rows { out.summary[row.external_id] = row.ai_summary }
         for r in repos {
             guard let id = idByExternal[String(r.id)] else { continue }
             if let p = prevByItem[id] { out.previous[String(r.id)] = p }

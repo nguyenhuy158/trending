@@ -11,6 +11,7 @@ struct Repo: Codable, Identifiable {
     let owner: Owner?
     var delta: Int = 0          // stars gained since the last snapshot we have
     var history: [Int] = []     // sao theo ngày, lấy từ metrics — vẽ sparkline
+    var aiSummary: String?      // tóm tắt Claude đã cache trong DB
 
     struct Owner: Codable { let avatar_url: String? }
 
@@ -73,6 +74,7 @@ func fetch(days: Int, topic: String, sort: SortBy = .stars, page: Int = 1) async
         let key = String(repos[i].id)
         if let was = synced.previous[key] { repos[i].delta = repos[i].stargazers_count - was }
         repos[i].history = synced.history[key] ?? []
+        repos[i].aiSummary = synced.summary[key]
     }
     return repos
 }
@@ -81,6 +83,33 @@ func fetch(days: Int, topic: String, sort: SortBy = .stars, page: Int = 1) async
     var body: some Scene {
         WindowGroup("GitHub Trending") { ContentView() }
             .defaultSize(width: 900, height: 760)
+        // Cửa sổ ⌘, của macOS — khỏi tốn chỗ trên toolbar.
+        Settings { SetupView() }
+    }
+}
+
+/// Nhập credential: hiện trong ⌘, và inline ở lần chạy đầu.
+struct SetupView: View {
+    var onSave: () -> Void = {}
+    @State private var sbURL = Store.url
+    @State private var sbKey = ""
+    @State private var aiKey = ""
+
+    var body: some View {
+        Form {
+            TextField("Supabase URL", text: $sbURL, prompt: Text("https://xxx.supabase.co"))
+            SecureField("Supabase anon key", text: $sbKey)
+            SecureField("Anthropic API key", text: $aiKey, prompt: Text("cho nút ✨"))
+            Button("Lưu") {
+                Store.url = sbURL
+                if !sbKey.isEmpty { Store.key = sbKey }
+                if !aiKey.isEmpty { AI.key = aiKey }
+                onSave()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding()
+        .frame(width: 380)
     }
 }
 
@@ -114,8 +143,6 @@ struct ContentView: View {
     @State private var page = 1
     @State private var canLoadMore = false
     @State private var configured = Store.isConfigured
-    @State private var sbURL = Store.url
-    @State private var sbKey = ""
 
     var body: some View {
         NavigationStack {
@@ -124,7 +151,7 @@ struct ContentView: View {
                     Label(e, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange).font(.callout)
                 }
-                if !configured { supabaseSetup }
+                if !configured { setupBox }
                 ForEach(repos) { RepoRow(repo: $0) }
                 // Cuộn tới cuối là tự kéo trang kế — không cần nút bấm.
                 if canLoadMore {
@@ -173,22 +200,10 @@ struct ContentView: View {
         .task { await load() }
     }
 
-    /// Chỉ hiện khi chưa có credential — nhập xong là biến mất.
-    private var supabaseSetup: some View {
-        GroupBox("Kết nối Supabase") {
-            VStack(alignment: .leading, spacing: 8) {
-                TextField("https://xxx.supabase.co", text: $sbURL)
-                SecureField("anon key", text: $sbKey)
-                Button("Lưu") {
-                    Store.url = sbURL; Store.key = sbKey
-                    configured = Store.isConfigured
-                    Task { await load() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(sbURL.isEmpty || sbKey.isEmpty)
-            }
-            .textFieldStyle(.roundedBorder)
-            .padding(4)
+    /// Lần chạy đầu chưa có gì thì hỏi ngay tại chỗ; sau đó dùng ⌘,.
+    private var setupBox: some View {
+        GroupBox("Kết nối Supabase — hoặc mở Cài đặt (⌘,)") {
+            SetupView { configured = Store.isConfigured; Task { await load() } }
         }
         .listRowSeparator(.hidden)
     }
@@ -218,6 +233,16 @@ struct ContentView: View {
 struct RepoRow: View {
     let repo: Repo
     @State private var hovering = false
+    @State private var summary: String?
+    @State private var asking = false
+
+    /// Lỗi cũng đổ vào chỗ hiện tóm tắt — một dòng chữ, khỏi alert.
+    private func ask() async {
+        asking = true
+        do { summary = try await AI.summarize(repo) }
+        catch { summary = error.localizedDescription }
+        asking = false
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -243,12 +268,25 @@ struct RepoRow: View {
                 if let d = repo.description, !d.isEmpty {
                     Text(d).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                 }
+                if let s = summary ?? repo.aiSummary {
+                    Label(s, systemImage: "sparkles")
+                        .font(.caption).foregroundStyle(.purple)
+                        .padding(8)
+                        .background(.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                }
                 HStack(spacing: 8) {
                     if let l = repo.language {
                         Text(l).font(.caption2)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(.quaternary, in: Capsule())
                     }
+                    Button { Task { await ask() } } label: {
+                        if asking { ProgressView().controlSize(.mini) }
+                        else { Image(systemName: "sparkles") }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(asking)
+                    .help("Nhờ Claude tóm tắt")
                     Spacer()
                     Sparkline(values: repo.history).frame(width: 72, height: 18)
                 }

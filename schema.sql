@@ -31,3 +31,4 @@ create policy anon_all_items   on items   for all to anon using (true) with chec
 create policy anon_all_metrics on metrics for all to anon using (true) with check (true);
 
 alter table items add column if not exists icon_url text;
+alter table items add column if not exists ai_summary text;

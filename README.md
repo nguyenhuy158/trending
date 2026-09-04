@@ -19,6 +19,7 @@ open Trending.app
 - "Tăng sao nhanh" xếp theo delta lấy từ `metrics` nên chỉ có nghĩa sau khi cron chạy đủ 2 ngày, và chỉ xếp trong các trang đã tải.
 - Danh sách phân trang 50 repo/lần, cuộn tới cuối tự tải tiếp (Search API trần 1000 kết quả).
 - Bị rate limit thì set `GITHUB_TOKEN` trước khi mở app.
+- Nút ✨ trên mỗi repo nhờ Claude tóm tắt tiếng Việt (làm gì / hợp với ai / đáng thử không). Cần `ANTHROPIC_API_KEY` (env hoặc ⌘,). Tóm tắt cache vào cột `items.ai_summary` nên mỗi repo chỉ gọi API một lần, người mở sau thấy sẵn.
 - Crawl tự động: `cron.sql` cài `http` + `pg_cron`, hàm `crawl_github(topic, days)` chạy 6h/lần ngay trong Postgres — dữ liệu vẫn đầy đủ kể cả khi không mở app.
 
 Kế hoạch tiếp theo: xem `ROADMAP.md`.

@@ -20,6 +20,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 [ -f AppIcon.icns ] || iconutil -c icns AppIcon.iconset -o AppIcon.icns
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-swiftc -O -parse-as-library App.swift Store.swift -o "$APP/Contents/MacOS/Trending" -framework Cocoa -framework SwiftUI
+swiftc -O -parse-as-library App.swift Store.swift AI.swift -o "$APP/Contents/MacOS/Trending" -framework Cocoa -framework SwiftUI
 codesign --force --sign - "$APP"
 echo "Built $APP — open $APP"
