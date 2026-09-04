@@ -4,9 +4,8 @@ import Foundation
 /// nên không tốn tiền. Kết quả cache vào cột `items.ai_summary` — mỗi repo gọi
 /// đúng một lần, ai mở app sau cũng thấy sẵn.
 enum AI {
-    /// Model free khác nếu cái này hết quota: minimax/minimax-m3:free,
-    /// google/gemma-4-31b-it:free, nvidia/nemotron-3.5-lightning:free.
-    static let defaultModel = "z-ai/glm-5.2:free"
+    /// glm-5.2:free nghe hay nhất nhưng pool chung của nó 429 gần như liên tục.
+    static let defaultModel = "minimax/minimax-m3:free"
 
     static var key: String {
         get { stored("OPENROUTER_API_KEY") }
@@ -84,7 +83,54 @@ enum AI {
         return text
     }
 
-    private static func ask(_ model: String, _ prompt: String) async throws -> String {
+    /// AI chấm cả trang trong đúng một call: điểm đáng thử, nhãn loại, một câu lý do.
+    struct Verdict: Codable { let id: String; let score: Int; let tag: String; let why: String }
+
+    static func rank(_ repos: [Repo]) async throws -> [String: Verdict] {
+        guard isConfigured else {
+            throw NSError(domain: "ai", code: 401, userInfo: [NSLocalizedDescriptionKey:
+                "Chưa có OPENROUTER_API_KEY — mở Cài đặt (⌘,) để điền."])
+        }
+        // Càng nhiều repo càng dễ vượt output limit của model free; 25 là mức chạy ổn.
+        let batch = repos.prefix(25)
+        let lines = batch.map {
+            "\($0.id) | \($0.full_name) | \($0.language ?? "?") | \($0.stargazers_count)★ | "
+                + ($0.description ?? "").prefix(140)
+        }.joined(separator: "\n")
+        let prompt = """
+        Danh sách repo GitHub mới (id | tên | ngôn ngữ | sao | mô tả):
+        \(lines)
+
+        Với MỖI repo, chấm mức đáng thử cho một dev đang tìm tool/AI mới.
+        Trả về DUY NHẤT một mảng JSON, không markdown, không giải thích ngoài JSON:
+        [{"id":"<id>","score":<0-100>,"tag":"<agent|cli|lib|app|model|data|other>","why":"<1 câu tiếng Việt>"}]
+        """
+        var busy: Busy?
+        for m in [model] + fallbacks.filter({ $0 != model }) {
+            do {
+                let raw = try await ask(m, prompt, maxTokens: 2000)
+                let list = try decodeVerdicts(raw)
+                return Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            } catch let e as Busy { busy = e }
+        }
+        throw NSError(domain: "openrouter", code: 429, userInfo: [NSLocalizedDescriptionKey:
+            "Không xếp hạng được — model free đang nghẽn (\(busy?.model ?? model)). Thử lại sau."])
+    }
+
+    /// Model free hay bọc JSON trong ```json ... ``` hoặc kèm lời dẫn — cắt lấy phần mảng.
+    private static func decodeVerdicts(_ raw: String) throws -> [Verdict] {
+        guard let start = raw.firstIndex(of: "["), let end = raw.lastIndex(of: "]"),
+              start < end,
+              let data = String(raw[start...end]).data(using: .utf8),
+              let list = try? JSONDecoder().decode([Verdict].self, from: data), !list.isEmpty
+        else {
+            throw NSError(domain: "openrouter", code: 422, userInfo: [NSLocalizedDescriptionKey:
+                "Model trả JSON không đọc được — chọn model free khác trong ⌘,."])
+        }
+        return list
+    }
+
+    private static func ask(_ model: String, _ prompt: String, maxTokens: Int = 400) async throws -> String {
         var r = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         r.httpMethod = "POST"
         r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -92,7 +138,7 @@ enum AI {
         r.setValue("Trending", forHTTPHeaderField: "X-Title")
         r.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": model,
-            "max_tokens": 400,
+            "max_tokens": maxTokens,
             "messages": [["role": "user", "content": prompt]],
         ])
         let (data, resp) = try await URLSession.shared.data(for: r)

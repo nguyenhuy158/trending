@@ -48,13 +48,32 @@ enum Store {
         return data
     }
 
-    private struct Row: Codable { let id: Int64; let external_id: String; let ai_summary: String? }
+    private struct Row: Codable {
+        let id: Int64; let external_id: String
+        let ai_summary: String?; let ai_score: Int?; let ai_tag: String?
+    }
     private struct Metric: Codable { let item_id: Int64; let day: String; let score: Int }
 
     struct Synced {
         var previous: [String: Int] = [:]      // sao hôm qua, để tính delta
         var history: [String: [Int]] = [:]     // sao theo ngày, để vẽ sparkline
         var summary: [String: String] = [:]    // tóm tắt AI đã cache
+        var verdict: [String: (score: Int, tag: String?)] = [:]  // điểm AI đã cache
+    }
+
+    /// Ghi cả trang điểm AI trong một upsert. Phải gửi kèm url/title vì nhánh
+    /// INSERT của upsert vẫn phải hợp lệ dù thực tế luôn rơi vào nhánh UPDATE.
+    static func saveRanking(_ repos: [Repo], _ verdicts: [String: AI.Verdict],
+                            source: String = "github") async throws {
+        let rows = repos.compactMap { r -> [String: Any]? in
+            guard let v = verdicts[String(r.id)] else { return nil }
+            return ["source": source, "external_id": String(r.id), "url": r.html_url,
+                    "title": r.full_name, "ai_score": v.score, "ai_tag": v.tag, "ai_summary": v.why]
+        }
+        guard !rows.isEmpty else { return }
+        _ = try await send(try request("items?on_conflict=source,external_id", method: "POST",
+                                       body: try JSONSerialization.data(withJSONObject: rows),
+                                       prefer: "resolution=merge-duplicates,return=minimal"))
     }
 
     /// Ghi tóm tắt của Claude vào item để lần sau khỏi gọi lại.
@@ -76,7 +95,7 @@ enum Store {
              "meta": ["language": r.language as Any? ?? NSNull()]]
         }
         let rows = try JSONDecoder().decode([Row].self, from: try await send(try request(
-            "items?on_conflict=source,external_id&select=id,external_id,ai_summary",
+            "items?on_conflict=source,external_id&select=id,external_id,ai_summary,ai_score,ai_tag",
             method: "POST", body: try JSONSerialization.data(withJSONObject: items),
             prefer: "resolution=merge-duplicates,return=representation")))
 
@@ -100,7 +119,10 @@ enum Store {
                                        prefer: "resolution=merge-duplicates,return=minimal"))
 
         var out = Synced()
-        for row in rows { out.summary[row.external_id] = row.ai_summary }
+        for row in rows {
+            out.summary[row.external_id] = row.ai_summary
+            if let s = row.ai_score { out.verdict[row.external_id] = (s, row.ai_tag) }
+        }
         for r in repos {
             guard let id = idByExternal[String(r.id)] else { continue }
             if let p = prevByItem[id] { out.previous[String(r.id)] = p }

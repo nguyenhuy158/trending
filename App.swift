@@ -11,7 +11,9 @@ struct Repo: Codable, Identifiable {
     let owner: Owner?
     var delta: Int = 0          // stars gained since the last snapshot we have
     var history: [Int] = []     // sao theo ngày, lấy từ metrics — vẽ sparkline
-    var aiSummary: String?      // tóm tắt Claude đã cache trong DB
+    var aiSummary: String?      // tóm tắt / lý do AI đã cache trong DB
+    var aiScore: Int?           // điểm đáng thử AI chấm
+    var aiTag: String?          // agent / cli / lib / app / model / data
 
     struct Owner: Codable { let avatar_url: String? }
 
@@ -34,14 +36,15 @@ let presets: [(name: String, topic: String)] = [
 ]
 
 enum SortBy: String, CaseIterable, Identifiable {
-    case stars = "Nhiều sao", updated = "Mới cập nhật", delta = "Tăng sao nhanh", best = "Liên quan"
+    case stars = "Nhiều sao", updated = "Mới cập nhật", delta = "Tăng sao nhanh"
+    case ai = "AI chọn", best = "Liên quan"
     var id: Self { self }
-    /// `delta` xếp ở phía mình nên vẫn hỏi API theo sao; `best` là best-match, bỏ tham số sort.
+    /// `delta`/`ai` xếp ở phía mình nên vẫn hỏi API theo sao; `best` là best-match, bỏ tham số sort.
     var apiSort: String? {
         switch self {
-        case .stars, .delta: return "stars"
-        case .updated:       return "updated"
-        case .best:          return nil
+        case .stars, .delta, .ai: return "stars"
+        case .updated:            return "updated"
+        case .best:               return nil
         }
     }
 }
@@ -75,6 +78,7 @@ func fetch(days: Int, topic: String, sort: SortBy = .stars, page: Int = 1) async
         if let was = synced.previous[key] { repos[i].delta = repos[i].stargazers_count - was }
         repos[i].history = synced.history[key] ?? []
         repos[i].aiSummary = synced.summary[key]
+        if let v = synced.verdict[key] { repos[i].aiScore = v.score; repos[i].aiTag = v.tag }
     }
     return repos
 }
@@ -246,9 +250,26 @@ struct ContentView: View {
             page = next
             // Delta chỉ mình biết (từ metrics), API không sort hộ được — xếp tại chỗ.
             if sort == .delta { repos.sort { $0.delta > $1.delta } }
+            if sort == .ai { await rank() }
             canLoadMore = batch.count == pageSize && repos.count < maxResults
         } catch { self.error = error.localizedDescription }
         loading = false
+    }
+
+    /// Chấm điểm những repo chưa có điểm rồi xếp lại. Chỉ tốn 1 call cho cả trang,
+    /// và điểm nằm trong DB nên lần sau mở ra là có sẵn.
+    private func rank() async {
+        let todo = repos.filter { $0.aiScore == nil }
+        guard !todo.isEmpty else { repos.sort { ($0.aiScore ?? -1) > ($1.aiScore ?? -1) }; return }
+        do {
+            let verdicts = try await AI.rank(todo)
+            for i in repos.indices {
+                guard let v = verdicts[String(repos[i].id)] else { continue }
+                repos[i].aiScore = v.score; repos[i].aiTag = v.tag; repos[i].aiSummary = v.why
+            }
+            try? await Store.saveRanking(repos, verdicts)
+        } catch { self.error = error.localizedDescription }
+        repos.sort { ($0.aiScore ?? -1) > ($1.aiScore ?? -1) }
     }
 }
 
@@ -277,6 +298,13 @@ struct RepoRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(repo.full_name).font(.headline).lineLimit(1)
                     Spacer(minLength: 8)
+                    if let s = repo.aiScore {
+                        Label("\(s)", systemImage: "sparkles")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.purple)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.purple.opacity(0.12), in: Capsule())
+                            .help("Điểm đáng thử do AI chấm")
+                    }
                     if repo.delta > 0 {
                         Text("+\(repo.delta)")
                             .font(.caption.weight(.semibold)).foregroundStyle(.green)
@@ -301,6 +329,11 @@ struct RepoRow: View {
                         Text(l).font(.caption2)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(.quaternary, in: Capsule())
+                    }
+                    if let t = repo.aiTag {
+                        Text(t).font(.caption2).foregroundStyle(.purple)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.purple.opacity(0.1), in: Capsule())
                     }
                     Button { Task { await ask() } } label: {
                         if asking { ProgressView().controlSize(.mini) }

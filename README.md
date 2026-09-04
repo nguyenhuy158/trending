@@ -19,8 +19,10 @@ open Trending.app
 - "Tăng sao nhanh" xếp theo delta lấy từ `metrics` nên chỉ có nghĩa sau khi cron chạy đủ 2 ngày, và chỉ xếp trong các trang đã tải.
 - Danh sách phân trang 50 repo/lần, cuộn tới cuối tự tải tiếp (Search API trần 1000 kết quả).
 - Bị rate limit thì set `GITHUB_TOKEN` trước khi mở app.
-- Nút ✨ trên mỗi repo nhờ AI tóm tắt tiếng Việt (làm gì / hợp với ai / đáng thử không). Đi qua OpenRouter, mặc định model free `z-ai/glm-5.2:free` nên không tốn tiền; đổi model trong ⌘,. Cần `OPENROUTER_API_KEY` (env hoặc ⌘,).
-- Tóm tắt cache vào cột `items.ai_summary` nên mỗi repo chỉ gọi API một lần, người mở sau thấy sẵn.
+- Nút ✨ trên mỗi repo nhờ AI tóm tắt tiếng Việt (làm gì / hợp với ai / đáng thử không). Đi qua OpenRouter, mặc định model free `minimax/minimax-m3:free` nên không tốn tiền; đổi model trong ⌘, (dropdown lấy live danh sách `:free`). Cần `OPENROUTER_API_KEY` (env hoặc ⌘,).
+- Sort "AI chọn": AI chấm điểm đáng thử 0–100 + gắn nhãn (agent/cli/lib/app/model/data) cho cả trang trong **đúng 1 call**, rồi xếp theo điểm. Điểm hiện thành capsule tím cạnh tên repo.
+- Tóm tắt và điểm cache vào `items.ai_summary` / `ai_score` / `ai_tag` nên mỗi repo chỉ gọi API một lần, người mở sau thấy sẵn.
+- Model free dùng pool chung nên hay 429; app tự chờ đúng `retry_after_seconds` rồi thử lại, không được thì nhảy sang model free khác.
 - Crawl tự động: `cron.sql` cài `http` + `pg_cron`, hàm `crawl_github(topic, days)` chạy 6h/lần ngay trong Postgres — dữ liệu vẫn đầy đủ kể cả khi không mở app.
 
 Kế hoạch tiếp theo: xem `ROADMAP.md`.
