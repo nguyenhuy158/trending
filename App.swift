@@ -9,6 +9,12 @@ struct Repo: Codable, Identifiable {
     let language: String?
     let stargazers_count: Int
     var delta: Int = 0          // stars gained since the last snapshot we have
+
+    // delta is computed locally; leaving it out of the keys keeps decoding of
+    // GitHub's payload from failing on the missing field.
+    private enum CodingKeys: String, CodingKey {
+        case id, full_name, html_url, description, language, stargazers_count
+    }
 }
 
 private struct SearchResult: Codable { let items: [Repo] }
