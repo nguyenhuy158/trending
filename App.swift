@@ -23,16 +23,20 @@ struct Repo: Codable, Identifiable {
 
 private struct SearchResult: Codable { let items: [Repo] }
 
+/// Search API trần 1000 kết quả, nên phân trang cũng dừng ở đó.
+let pageSize = 50, maxResults = 1000
+
 func today(_ offset: Int = 0) -> String { Store.day(offset) }
 
 /// Trending has no API, so approximate it: repos created in the window, most starred.
 /// `topic` narrows to the AI/tool slice the app is for.
-func fetch(days: Int, topic: String) async throws -> [Repo] {
+func fetch(days: Int, topic: String, page: Int = 1) async throws -> [Repo] {
     var q = "created:>\(today(-days)) stars:>10"
     if !topic.isEmpty { q += " topic:\(topic)" }
     var c = URLComponents(string: "https://api.github.com/search/repositories")!
     c.queryItems = [.init(name: "q", value: q), .init(name: "sort", value: "stars"),
-                    .init(name: "order", value: "desc"), .init(name: "per_page", value: "50")]
+                    .init(name: "order", value: "desc"), .init(name: "per_page", value: "\(pageSize)"),
+                    .init(name: "page", value: "\(page)")]
     var r = URLRequest(url: c.url!)
     r.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
     // A token lifts the 10 req/min unauthenticated search limit; optional.
@@ -87,6 +91,8 @@ struct ContentView: View {
     @State private var topic = "ai"
     @State private var error: String?
     @State private var loading = false
+    @State private var page = 1
+    @State private var canLoadMore = false
     @State private var configured = Store.isConfigured
     @State private var sbURL = Store.url
     @State private var sbKey = ""
@@ -97,7 +103,12 @@ struct ContentView: View {
                 Picker("", selection: $days) {
                     Text("1 ngày").tag(1); Text("7 ngày").tag(7); Text("30 ngày").tag(30)
                 }.pickerStyle(.segmented).frame(width: 220)
-                TextField("topic (ai, llm, cli…)", text: $topic).frame(width: 140)
+                    // Đổi bộ lọc phải nạp lại từ trang 1, không thì trang sau
+                    // của bộ lọc mới bị nối vào danh sách cũ.
+                    .onChange(of: days) { Task { await load() } }
+                TextField("topic (ai, llm, cli…)", text: $topic)
+                    .frame(width: 140)
+                    .onSubmit { Task { await load() } }
                 Button("Refresh") { Task { await load() } }.disabled(loading)
                 if loading { ProgressView().scaleEffect(0.5) }
             }.padding(8)
@@ -115,7 +126,8 @@ struct ContentView: View {
                     }.disabled(sbURL.isEmpty || sbKey.isEmpty)
                 }.padding(8)
             }
-            List(repos) { r in
+            List {
+              ForEach(repos) { r in
                 HStack(alignment: .top, spacing: 10) {
                     AsyncImage(url: r.owner?.avatar_url.flatMap(URL.init)) { $0.resizable() }
                         placeholder: { Color.gray.opacity(0.15) }
@@ -134,15 +146,33 @@ struct ContentView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { NSWorkspace.shared.open(URL(string: r.html_url)!) }
+              }
+              // Cuộn tới cuối là tự kéo trang kế — không cần nút bấm.
+              if canLoadMore {
+                  HStack { Spacer(); ProgressView().scaleEffect(0.5); Spacer() }
+                      .onAppear { Task { await load(reset: false) } }
+              }
             }
         }
         .task { await load() }
     }
 
-    private func load() async {
+    private func load(reset: Bool = true) async {
+        if loading { return }
         loading = true; error = nil
-        do { repos = try await fetch(days: days, topic: topic) }
-        catch { self.error = error.localizedDescription }
+        let next = reset ? 1 : page + 1
+        do {
+            let batch = try await fetch(days: days, topic: topic, page: next)
+            if reset {
+                repos = batch
+            } else {
+                // Xếp hạng đổi giữa các lần gọi nên trang sau có thể lặp repo cũ.
+                let seen = Set(repos.map(\.id))
+                repos += batch.filter { !seen.contains($0.id) }
+            }
+            page = next
+            canLoadMore = batch.count == pageSize && repos.count < maxResults
+        } catch { self.error = error.localizedDescription }
         loading = false
     }
 }
