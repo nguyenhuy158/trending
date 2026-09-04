@@ -16,3 +16,6 @@ open Trending.app
 - Cấu hình bằng env `SUPABASE_URL` / `SUPABASE_ANON_KEY`, hoặc điền ngay trong app lần đầu mở (lưu vào UserDefaults).
 - Mỗi lần refresh upsert snapshot hôm nay và hiện `+N` sao so với hôm qua.
 - Bị rate limit thì set `GITHUB_TOKEN` trước khi mở app.
+- Crawl tự động: `cron.sql` cài `http` + `pg_cron`, hàm `crawl_github(topic, days)` chạy 6h/lần ngay trong Postgres — dữ liệu vẫn đầy đủ kể cả khi không mở app.
+
+Kế hoạch tiếp theo: xem `ROADMAP.md`.
