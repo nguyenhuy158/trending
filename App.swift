@@ -94,16 +94,19 @@ struct SetupView: View {
     @State private var sbURL = Store.url
     @State private var sbKey = ""
     @State private var aiKey = ""
+    @State private var aiModel = AI.model
 
     var body: some View {
         Form {
             TextField("Supabase URL", text: $sbURL, prompt: Text("https://xxx.supabase.co"))
             SecureField("Supabase anon key", text: $sbKey)
-            SecureField("Anthropic API key", text: $aiKey, prompt: Text("cho nút ✨"))
+            SecureField("OpenRouter API key", text: $aiKey, prompt: Text("cho nút ✨"))
+            TextField("Model", text: $aiModel, prompt: Text(AI.defaultModel))
             Button("Lưu") {
                 Store.url = sbURL
                 if !sbKey.isEmpty { Store.key = sbKey }
                 if !aiKey.isEmpty { AI.key = aiKey }
+                AI.model = aiModel
                 onSave()
             }
             .keyboardShortcut(.defaultAction)

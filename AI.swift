@@ -1,26 +1,38 @@
 import Foundation
 
-/// Tóm tắt repo bằng Claude. Kết quả cache vào cột `items.ai_summary`
-/// nên mỗi repo chỉ tốn tiền đúng một lần, ai mở app sau cũng thấy sẵn.
+/// Tóm tắt repo qua OpenRouter (API kiểu OpenAI). Mặc định dùng model `:free`
+/// nên không tốn tiền. Kết quả cache vào cột `items.ai_summary` — mỗi repo gọi
+/// đúng một lần, ai mở app sau cũng thấy sẵn.
 enum AI {
+    /// Model free khác nếu cái này hết quota: minimax/minimax-m3:free,
+    /// google/gemma-4-31b-it:free, nvidia/nemotron-3.5-lightning:free.
+    static let defaultModel = "z-ai/glm-5.2:free"
+
     static var key: String {
-        get {
-            let e = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
-            return e.isEmpty ? (UserDefaults.standard.string(forKey: "ANTHROPIC_API_KEY") ?? "") : e
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "ANTHROPIC_API_KEY") }
+        get { stored("OPENROUTER_API_KEY") }
+        set { UserDefaults.standard.set(newValue, forKey: "OPENROUTER_API_KEY") }
+    }
+    static var model: String {
+        get { let m = stored("OPENROUTER_MODEL"); return m.isEmpty ? defaultModel : m }
+        set { UserDefaults.standard.set(newValue, forKey: "OPENROUTER_MODEL") }
     }
     static var isConfigured: Bool { !key.isEmpty }
 
+    private static func stored(_ k: String) -> String {
+        let e = ProcessInfo.processInfo.environment[k] ?? ""
+        return e.isEmpty ? (UserDefaults.standard.string(forKey: k) ?? "") : e
+    }
+
     private struct Reply: Codable {
-        let content: [Block]
-        struct Block: Codable { let text: String? }
+        let choices: [Choice]
+        struct Choice: Codable { let message: Message }
+        struct Message: Codable { let content: String? }
     }
 
     static func summarize(_ repo: Repo) async throws -> String {
         guard isConfigured else {
             throw NSError(domain: "ai", code: 401, userInfo: [NSLocalizedDescriptionKey:
-                "Chưa có ANTHROPIC_API_KEY — bấm nút bánh răng trên toolbar để điền."])
+                "Chưa có OPENROUTER_API_KEY — mở Cài đặt (⌘,) để điền."])
         }
         let prompt = """
         Repo GitHub: \(repo.full_name)
@@ -30,23 +42,28 @@ enum AI {
         Trả lời bằng tiếng Việt, tối đa 3 câu: nó làm gì, hợp với ai, có đáng thử không.
         Nói thẳng, không markdown, không rào đón.
         """
-        var r = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        var r = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         r.httpMethod = "POST"
-        r.setValue(key, forHTTPHeaderField: "x-api-key")
-        r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue("Trending", forHTTPHeaderField: "X-Title")
         r.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": "claude-sonnet-5",
-            "max_tokens": 300,
+            "model": model,
+            "max_tokens": 400,
             "messages": [["role": "user", "content": prompt]],
         ])
         let (data, resp) = try await URLSession.shared.data(for: r)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 {
-            throw NSError(domain: "anthropic", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey:
-                "Claude \(h.statusCode): \(String(data: data, encoding: .utf8) ?? "")"])
+            throw NSError(domain: "openrouter", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey:
+                "OpenRouter \(h.statusCode): \(String(data: data, encoding: .utf8) ?? "")"])
         }
-        let text = try JSONDecoder().decode(Reply.self, from: data)
-            .content.compactMap(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (try JSONDecoder().decode(Reply.self, from: data)
+            .choices.first?.message.content ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw NSError(domain: "openrouter", code: 204, userInfo: [NSLocalizedDescriptionKey:
+                "Model \(model) trả về rỗng — thử model free khác trong Cài đặt."])
+        }
         // Cache hỏng thì cũng đã có câu trả lời rồi, không chặn UI vì chuyện đó.
         try? await Store.saveSummary(text, for: String(repo.id))
         return text
