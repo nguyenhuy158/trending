@@ -8,12 +8,16 @@ struct Repo: Codable, Identifiable {
     let description: String?
     let language: String?
     let stargazers_count: Int
+    let owner: Owner?
     var delta: Int = 0          // stars gained since the last snapshot we have
+    var history: [Int] = []     // sao theo ngày, lấy từ metrics — vẽ sparkline
 
-    // delta is computed locally; leaving it out of the keys keeps decoding of
-    // GitHub's payload from failing on the missing field.
+    struct Owner: Codable { let avatar_url: String? }
+
+    // delta/history tính ở phía mình; để chúng ngoài CodingKeys thì decode
+    // payload GitHub không chết vì thiếu field.
     private enum CodingKeys: String, CodingKey {
-        case id, full_name, html_url, description, language, stargazers_count
+        case id, full_name, html_url, description, language, stargazers_count, owner
     }
 }
 
@@ -41,9 +45,11 @@ func fetch(days: Int, topic: String) async throws -> [Repo] {
                       userInfo: [NSLocalizedDescriptionKey: "GitHub returned \(h.statusCode) — rate limited? Set GITHUB_TOKEN."])
     }
     var repos = try JSONDecoder().decode(SearchResult.self, from: data).items
-    let prev = try await Store.sync(repos)
+    let synced = try await Store.sync(repos)
     for i in repos.indices {
-        if let was = prev[String(repos[i].id)] { repos[i].delta = repos[i].stargazers_count - was }
+        let key = String(repos[i].id)
+        if let was = synced.previous[key] { repos[i].delta = repos[i].stargazers_count - was }
+        repos[i].history = synced.history[key] ?? []
     }
     return repos
 }
@@ -52,6 +58,26 @@ func fetch(days: Int, topic: String) async throws -> [Repo] {
     var body: some Scene {
         WindowGroup("GitHub Trending") { ContentView() }
             .defaultSize(width: 620, height: 720)
+    }
+}
+
+/// Star chart nhỏ vẽ từ lịch sử `metrics` của chính mình — không phụ thuộc dịch vụ ngoài.
+struct Sparkline: View {
+    let values: [Int]
+    var body: some View {
+        GeometryReader { g in
+            let lo = values.min() ?? 0, hi = values.max() ?? 0
+            let span = max(hi - lo, 1)
+            if values.count > 1 {
+                Path { p in
+                    for (i, v) in values.enumerated() {
+                        let x = g.size.width * CGFloat(i) / CGFloat(values.count - 1)
+                        let y = g.size.height * (1 - CGFloat(v - lo) / CGFloat(span))
+                        i == 0 ? p.move(to: .init(x: x, y: y)) : p.addLine(to: .init(x: x, y: y))
+                    }
+                }.stroke(.green, lineWidth: 1.5)
+            }
+        }
     }
 }
 
@@ -90,15 +116,21 @@ struct ContentView: View {
                 }.padding(8)
             }
             List(repos) { r in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(r.full_name).font(.headline)
-                        Spacer()
-                        Text("★ \(r.stargazers_count)")
-                        if r.delta > 0 { Text("+\(r.delta)").foregroundStyle(.green) }
+                HStack(alignment: .top, spacing: 10) {
+                    AsyncImage(url: r.owner?.avatar_url.flatMap(URL.init)) { $0.resizable() }
+                        placeholder: { Color.gray.opacity(0.15) }
+                        .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(r.full_name).font(.headline)
+                            Spacer()
+                            Sparkline(values: r.history).frame(width: 70, height: 20)
+                            Text("★ \(r.stargazers_count)")
+                            if r.delta > 0 { Text("+\(r.delta)").foregroundStyle(.green) }
+                        }
+                        if let d = r.description { Text(d).font(.caption).lineLimit(2) }
+                        if let l = r.language { Text(l).font(.caption2).foregroundStyle(.secondary) }
                     }
-                    if let d = r.description { Text(d).font(.caption).lineLimit(2) }
-                    if let l = r.language { Text(l).font(.caption2).foregroundStyle(.secondary) }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { NSWorkspace.shared.open(URL(string: r.html_url)!) }

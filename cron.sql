@@ -38,12 +38,13 @@ begin
   with src as (
     select r from jsonb_array_elements(body->'items') as t(r)
   ), up as (
-    insert into items (source, external_id, url, title, description, meta)
+    insert into items (source, external_id, url, title, description, icon_url, meta)
     select 'github', (r->>'id'), r->>'html_url', r->>'full_name', r->>'description',
-           jsonb_build_object('language', r->'language')
+           r->'owner'->>'avatar_url', jsonb_build_object('language', r->'language')
     from src
     on conflict (source, external_id) do update
-      set title = excluded.title, description = excluded.description, meta = excluded.meta
+      set title = excluded.title, description = excluded.description,
+          icon_url = excluded.icon_url, meta = excluded.meta
     returning id, external_id
   )
   insert into metrics (item_id, day, score)

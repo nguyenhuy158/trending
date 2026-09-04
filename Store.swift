@@ -49,15 +49,21 @@ enum Store {
     }
 
     private struct Row: Codable { let id: Int64; let external_id: String }
-    private struct Metric: Codable { let item_id: Int64; let score: Int }
+    private struct Metric: Codable { let item_id: Int64; let day: String; let score: Int }
 
-    /// Upsert item + snapshot sao hôm nay, trả về sao của hôm qua theo repo id GitHub.
-    static func sync(_ repos: [Repo], source: String = "github") async throws -> [String: Int] {
-        guard !repos.isEmpty else { return [:] }
+    struct Synced {
+        var previous: [String: Int] = [:]      // sao hôm qua, để tính delta
+        var history: [String: [Int]] = [:]     // sao theo ngày, để vẽ sparkline
+    }
+
+    /// Upsert item + snapshot sao hôm nay; trả về sao hôm qua và lịch sử 14 ngày.
+    static func sync(_ repos: [Repo], source: String = "github") async throws -> Synced {
+        guard !repos.isEmpty else { return Synced() }
 
         let items = repos.map { r -> [String: Any] in
             ["source": source, "external_id": String(r.id), "url": r.html_url,
              "title": r.full_name, "description": r.description as Any? ?? NSNull(),
+             "icon_url": r.owner?.avatar_url as Any? ?? NSNull(),
              "meta": ["language": r.language as Any? ?? NSNull()]]
         }
         let rows = try JSONDecoder().decode([Row].self, from: try await send(try request(
@@ -67,11 +73,14 @@ enum Store {
 
         let idByExternal = Dictionary(uniqueKeysWithValues: rows.map { ($0.external_id, $0.id) })
 
-        // Lấy snapshot hôm qua trước khi ghi hôm nay, để delta không tự so với chính nó.
+        // Đọc lịch sử trước khi ghi hôm nay, để delta không tự so với chính nó.
         let ids = rows.map { String($0.id) }.joined(separator: ",")
-        let prev = try JSONDecoder().decode([Metric].self, from: try await send(try request(
-            "metrics?select=item_id,score&day=eq.\(day(-1))&item_id=in.(\(ids))")))
-        let prevByItem = Dictionary(uniqueKeysWithValues: prev.map { ($0.item_id, $0.score) })
+        let past = try JSONDecoder().decode([Metric].self, from: try await send(try request(
+            "metrics?select=item_id,day,score&day=gte.\(day(-14))&item_id=in.(\(ids))&order=day.asc")))
+        let prevByItem = Dictionary(uniqueKeysWithValues:
+            past.filter { $0.day == day(-1) }.map { ($0.item_id, $0.score) })
+        var seriesByItem: [Int64: [Int]] = [:]
+        for m in past { seriesByItem[m.item_id, default: []].append(m.score) }
 
         let metrics = repos.compactMap { r -> [String: Any]? in
             guard let id = idByExternal[String(r.id)] else { return nil }
@@ -81,9 +90,14 @@ enum Store {
                                        body: try JSONSerialization.data(withJSONObject: metrics),
                                        prefer: "resolution=merge-duplicates,return=minimal"))
 
-        return Dictionary(uniqueKeysWithValues: repos.compactMap { r in
-            idByExternal[String(r.id)].flatMap { prevByItem[$0] }.map { (String(r.id), $0) }
-        })
+        var out = Synced()
+        for r in repos {
+            guard let id = idByExternal[String(r.id)] else { continue }
+            if let p = prevByItem[id] { out.previous[String(r.id)] = p }
+            // Nối luôn số sao hôm nay để đường chart chạy tới hiện tại.
+            out.history[String(r.id)] = (seriesByItem[id] ?? []) + [r.stargazers_count]
+        }
+        return out
     }
 
     static func day(_ offset: Int) -> String {

@@ -7,6 +7,7 @@ create table if not exists items (
   url         text not null,
   title       text not null,
   description text,
+  icon_url    text,                        -- logo/avatar của tool nếu nguồn có
   meta        jsonb not null default '{}', -- field riêng của từng nguồn (language…)
   first_seen  date not null default current_date,
   unique (source, external_id)
@@ -28,3 +29,5 @@ alter table items   enable row level security;
 alter table metrics enable row level security;
 create policy anon_all_items   on items   for all to anon using (true) with check (true);
 create policy anon_all_metrics on metrics for all to anon using (true) with check (true);
+
+alter table items add column if not exists icon_url text;
