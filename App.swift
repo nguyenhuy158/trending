@@ -80,7 +80,7 @@ func fetch(days: Int, topic: String, sort: SortBy = .stars, page: Int = 1) async
 @main struct App_: App {
     var body: some Scene {
         WindowGroup("GitHub Trending") { ContentView() }
-            .defaultSize(width: 620, height: 720)
+            .defaultSize(width: 900, height: 760)
     }
 }
 
@@ -118,73 +118,79 @@ struct ContentView: View {
     @State private var sbKey = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Picker("", selection: $days) {
-                    Text("1 ngày").tag(1); Text("7 ngày").tag(7); Text("30 ngày").tag(30)
-                }.pickerStyle(.segmented).frame(width: 220)
-                    // Đổi bộ lọc phải nạp lại từ trang 1, không thì trang sau
-                    // của bộ lọc mới bị nối vào danh sách cũ.
-                    .onChange(of: days) { Task { await load() } }
-                TextField("topic (ai, llm, cli…)", text: $topic)
-                    .frame(width: 130)
-                    .onSubmit { Task { await load() } }
-                Button("Refresh") { Task { await load() } }.disabled(loading)
-                if loading { ProgressView().scaleEffect(0.5) }
-            }.padding(.horizontal, 8).padding(.top, 8)
-            HStack {
-                Picker("", selection: Binding(get: { topic }, set: { topic = $0; Task { await load() } })) {
-                    ForEach(presets, id: \.topic) { Text($0.name).tag($0.topic) }
-                }.frame(width: 150)
-                Picker("", selection: $sort) {
-                    ForEach(SortBy.allCases) { Text($0.rawValue).tag($0) }
-                }.frame(width: 150)
-                .onChange(of: sort) { Task { await load() } }
-                Spacer()
-            }.padding(.horizontal, 8).padding(.bottom, 8)
-            Divider()
-            if let e = error { Text(e).foregroundStyle(.red).padding(8) }
-            if !configured {
-                // Chỉ hiện khi chưa có credential — nhập xong là biến mất.
-                VStack(spacing: 6) {
-                    TextField("https://xxx.supabase.co", text: $sbURL)
-                    SecureField("anon key", text: $sbKey)
-                    Button("Lưu Supabase") {
-                        Store.url = sbURL; Store.key = sbKey
-                        configured = Store.isConfigured
-                        Task { await load() }
-                    }.disabled(sbURL.isEmpty || sbKey.isEmpty)
-                }.padding(8)
-            }
+        NavigationStack {
             List {
-              ForEach(repos) { r in
-                HStack(alignment: .top, spacing: 10) {
-                    AsyncImage(url: r.owner?.avatar_url.flatMap(URL.init)) { $0.resizable() }
-                        placeholder: { Color.gray.opacity(0.15) }
-                        .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(r.full_name).font(.headline)
-                            Spacer()
-                            Sparkline(values: r.history).frame(width: 70, height: 20)
-                            Text("★ \(r.stargazers_count)")
-                            if r.delta > 0 { Text("+\(r.delta)").foregroundStyle(.green) }
-                        }
-                        if let d = r.description { Text(d).font(.caption).lineLimit(2) }
-                        if let l = r.language { Text(l).font(.caption2).foregroundStyle(.secondary) }
-                    }
+                if let e = error {
+                    Label(e, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).font(.callout)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { NSWorkspace.shared.open(URL(string: r.html_url)!) }
-              }
-              // Cuộn tới cuối là tự kéo trang kế — không cần nút bấm.
-              if canLoadMore {
-                  HStack { Spacer(); ProgressView().scaleEffect(0.5); Spacer() }
-                      .onAppear { Task { await load(reset: false) } }
-              }
+                if !configured { supabaseSetup }
+                ForEach(repos) { RepoRow(repo: $0) }
+                // Cuộn tới cuối là tự kéo trang kế — không cần nút bấm.
+                if canLoadMore {
+                    HStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
+                        .listRowSeparator(.hidden)
+                        .onAppear { Task { await load(reset: false) } }
+                }
+            }
+            .listStyle(.inset)
+            // Thanh search của hệ thống: đúng chỗ, đúng phím tắt, không phải tự vẽ.
+            .searchable(text: $topic, prompt: "topic: ai, llm, mcp…")
+            .onSubmit(of: .search) { Task { await load() } }
+            .toolbar {
+                ToolbarItemGroup {
+                    Picker("", selection: $days) {
+                        Text("1d").tag(1); Text("7d").tag(7); Text("30d").tag(30)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: days) { Task { await load() } }
+
+                    Picker("Chủ đề", selection: Binding(get: { topic },
+                                                        set: { topic = $0; Task { await load() } })) {
+                        ForEach(presets, id: \.topic) { Text($0.name).tag($0.topic) }
+                    }
+                    .frame(width: 108)
+                    Picker("Sắp xếp", selection: $sort) {
+                        ForEach(SortBy.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .frame(width: 128)
+                    .onChange(of: sort) { Task { await load() } }
+
+                    Button { Task { await load() } } label: {
+                        Image(systemName: loading ? "arrow.clockwise.circle" : "arrow.clockwise")
+                    }
+                    .help("Tải lại")
+                    .disabled(loading)
+                }
+            }
+            .overlay {
+                if repos.isEmpty && !loading && configured && error == nil {
+                    Text("Không có repo nào khớp bộ lọc").foregroundStyle(.secondary)
+                }
             }
         }
+        .frame(minWidth: 880, minHeight: 520)
         .task { await load() }
+    }
+
+    /// Chỉ hiện khi chưa có credential — nhập xong là biến mất.
+    private var supabaseSetup: some View {
+        GroupBox("Kết nối Supabase") {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("https://xxx.supabase.co", text: $sbURL)
+                SecureField("anon key", text: $sbKey)
+                Button("Lưu") {
+                    Store.url = sbURL; Store.key = sbKey
+                    configured = Store.isConfigured
+                    Task { await load() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(sbURL.isEmpty || sbKey.isEmpty)
+            }
+            .textFieldStyle(.roundedBorder)
+            .padding(4)
+        }
+        .listRowSeparator(.hidden)
     }
 
     private func load(reset: Bool = true) async {
@@ -206,5 +212,52 @@ struct ContentView: View {
             canLoadMore = batch.count == pageSize && repos.count < maxResults
         } catch { self.error = error.localizedDescription }
         loading = false
+    }
+}
+
+struct RepoRow: View {
+    let repo: Repo
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            AsyncImage(url: repo.owner?.avatar_url.flatMap(URL.init)) { $0.resizable().scaledToFill() }
+                placeholder: { Rectangle().fill(.quaternary) }
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(repo.full_name).font(.headline).lineLimit(1)
+                    Spacer(minLength: 8)
+                    if repo.delta > 0 {
+                        Text("+\(repo.delta)")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.green)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.green.opacity(0.15), in: Capsule())
+                    }
+                    Label("\(repo.stargazers_count)", systemImage: "star.fill")
+                        .font(.callout.monospacedDigit()).foregroundStyle(.orange)
+                        .labelStyle(.titleAndIcon)
+                }
+                if let d = repo.description, !d.isEmpty {
+                    Text(d).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    if let l = repo.language {
+                        Text(l).font(.caption2)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.quaternary, in: Capsule())
+                    }
+                    Spacer()
+                    Sparkline(values: repo.history).frame(width: 72, height: 18)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .background(hovering ? Color.primary.opacity(0.05) : .clear)
+        .onHover { hovering = $0 }
+        .onTapGesture { NSWorkspace.shared.open(URL(string: repo.html_url)!) }
     }
 }
